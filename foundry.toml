@@ -1,0 +1,7 @@
+[profile.default]
+src = "contracts/src"
+test = "contracts/test"
+script = "contracts/script"
+libs = ["lib"]
+
+chain_id = 84532

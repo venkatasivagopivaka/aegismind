@@ -11,6 +11,11 @@ dist/
 build/
 coverage/
 
+# Foundry output
+out/
+cache/
+broadcast/
+
 # Logs
 *.log
 

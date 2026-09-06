@@ -1,0 +1,10 @@
+{
+  "name": "aegismind",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
