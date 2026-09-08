@@ -30,6 +30,10 @@ contract AegisMindPolicy is IPolicy {
     address public constant WETH = 0x4200000000000000000000000000000000000006;
     address public constant UNIVERSAL_ROUTER = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
 
+    // Kernel executeUserOp selector: executeUserOp(PackedUserOperation,bytes32)
+    // Required outer wrapper when Permission validation has an attached Hook.
+    bytes4 public constant EXECUTE_USER_OP_SELECTOR = 0x8dd7712f;
+
     // Kernel execute selector: execute(bytes32,bytes)
     bytes4 public constant KERNEL_EXECUTE_SELECTOR = 0xe9ae5c53;
 
@@ -78,12 +82,15 @@ contract AegisMindPolicy is IPolicy {
         address recovered = surrogateHash.toEthSignedMessageHash().recover(policySig);
         if (recovered != signer) revert Unauthorized();
 
-        // 2. Enforce Execute Selector
-        if (userOp.callData.length < 100) revert MalformedCalldata();
-        if (bytes4(userOp.callData[0:4]) != KERNEL_EXECUTE_SELECTOR) revert InvalidSelector();
+        // 2. Enforce executeUserOp outer wrapper + nested execute selector
+        //    Kernel v3.3 requires executeUserOp wrapper when a Permission Hook is attached.
+        //    Layout: [0:4] = executeUserOp selector, [4:8] = execute selector, [8:] = execute ABI args
+        if (userOp.callData.length < 104) revert MalformedCalldata();
+        if (bytes4(userOp.callData[0:4]) != EXECUTE_USER_OP_SELECTOR) revert InvalidSelector();
+        if (bytes4(userOp.callData[4:8]) != KERNEL_EXECUTE_SELECTOR) revert InvalidSelector();
 
-        // 3. Enforce CALLTYPE_SINGLE
-        (bytes32 mode, bytes memory executionCalldata) = abi.decode(userOp.callData[4:], (bytes32, bytes));
+        // 3. Enforce CALLTYPE_SINGLE (parse execute args from offset 8)
+        (bytes32 mode, bytes memory executionCalldata) = abi.decode(userOp.callData[8:], (bytes32, bytes));
         if (bytes1(mode) != 0x00) revert InvalidCallType();
 
         // 4. Extract ExecutionCalldata (target, value, innerCalldata)

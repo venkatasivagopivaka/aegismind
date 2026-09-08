@@ -29,7 +29,22 @@ contract AegisMindPolicyTest is Test {
         policy.onInstall(abi.encode(PERMISSION_ID, securitySigner));
     }
 
-    function _buildExecuteCallData(address target, uint256 value, bytes memory innerCallData) internal pure returns (bytes memory) {
+    /// @dev Builds the full userOp.callData with executeUserOp wrapper:
+    ///      [0:4]  = 0x8dd7712f (executeUserOp)
+    ///      [4:8]  = 0xe9ae5c53 (execute)
+    ///      [8:..] = ABI(ExecMode, executionCalldata)
+    function _buildCallData(address target, uint256 value, bytes memory innerCallData) internal pure returns (bytes memory) {
+        bytes memory executionCalldata = abi.encodePacked(target, value, innerCallData);
+        bytes32 execMode = bytes32(0); // CALLTYPE_SINGLE, EXECTYPE_DEFAULT
+        // Inner execute(ExecMode, bytes) call
+        bytes memory executePayload = abi.encodeWithSelector(0xe9ae5c53, execMode, executionCalldata);
+        // Wrap with executeUserOp selector
+        return abi.encodePacked(bytes4(0x8dd7712f), executePayload);
+    }
+
+    /// @dev Legacy helper that builds callData WITHOUT the executeUserOp wrapper
+    ///      (for testing that the old format is rejected)
+    function _buildExecuteCallDataNoWrapper(address target, uint256 value, bytes memory innerCallData) internal pure returns (bytes memory) {
         bytes memory executionCalldata = abi.encodePacked(target, value, innerCallData);
         bytes32 execMode = bytes32(0);
         return abi.encodeWithSelector(0xe9ae5c53, execMode, executionCalldata);
@@ -53,6 +68,14 @@ contract AegisMindPolicyTest is Test {
         return abi.encodePacked(USDC, uint24(500), WETH);
     }
 
+    function _signAndSetSig(PackedUserOperation memory userOp) internal view {
+        bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(securitySignerKey, surrogateHash.toEthSignedMessageHash());
+        userOp.signature = abi.encodePacked(r, s, v);
+    }
+
+    // ==================== SUCCESS TESTS ====================
+
     function test_Success_ValidSwap_UserOpSender() public {
         bytes[] memory inputs = new bytes[](1);
         inputs[0] = _buildV3SwapInput(account, 500e6, 490e6, _buildValidPath(), true);
@@ -62,16 +85,13 @@ contract AegisMindPolicyTest is Test {
         
         uint256 deadline = block.timestamp + 100;
         bytes memory routerCallData = _buildRouterCallData(commands, inputs, deadline);
-        bytes memory callData = _buildExecuteCallData(UNIVERSAL_ROUTER, 0, routerCallData);
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, routerCallData);
         
         PackedUserOperation memory userOp;
         userOp.sender = account;
         userOp.nonce = 1;
         userOp.callData = callData;
-        
-        bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(securitySignerKey, surrogateHash.toEthSignedMessageHash());
-        userOp.signature = abi.encodePacked(r, s, v);
+        _signAndSetSig(userOp);
         
         uint256 validationData = policy.checkUserOpPolicy(PERMISSION_ID, userOp);
         
@@ -88,21 +108,85 @@ contract AegisMindPolicyTest is Test {
         
         uint256 deadline = block.timestamp + 100;
         bytes memory routerCallData = _buildRouterCallData(commands, inputs, deadline);
-        bytes memory callData = _buildExecuteCallData(UNIVERSAL_ROUTER, 0, routerCallData);
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, routerCallData);
         
         PackedUserOperation memory userOp;
         userOp.sender = account;
         userOp.nonce = 1;
         userOp.callData = callData;
-        
-        bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(securitySignerKey, surrogateHash.toEthSignedMessageHash());
-        userOp.signature = abi.encodePacked(r, s, v);
+        _signAndSetSig(userOp);
         
         uint256 validationData = policy.checkUserOpPolicy(PERMISSION_ID, userOp);
         
         uint256 expected = (uint256(deadline) << 160) | (uint256(0) << 208) | 0;
         assertEq(validationData, expected);
+    }
+
+    // ==================== NEGATIVE TESTS ====================
+
+    function test_Revert_WrongOuterSelector() public {
+        // callData starts with raw execute selector (0xe9ae5c53) instead of executeUserOp
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = _buildV3SwapInput(account, 500e6, 490e6, _buildValidPath(), true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00;
+        
+        bytes memory callData = _buildExecuteCallDataNoWrapper(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        
+        PackedUserOperation memory userOp;
+        userOp.sender = account;
+        userOp.nonce = 1;
+        userOp.callData = callData;
+        _signAndSetSig(userOp);
+        
+        vm.expectRevert(AegisMindPolicy.InvalidSelector.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Revert_WrongNestedSelector() public {
+        // Correct outer executeUserOp, but wrong nested selector (not execute)
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = _buildV3SwapInput(account, 500e6, 490e6, _buildValidPath(), true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00;
+        bytes memory routerCallData = _buildRouterCallData(commands, inputs, block.timestamp + 100);
+        bytes memory executionCalldata = abi.encodePacked(UNIVERSAL_ROUTER, uint256(0), routerCallData);
+        
+        // Use wrong nested selector 0xdeadbeef instead of 0xe9ae5c53
+        bytes memory wrongInner = abi.encodeWithSelector(0xdeadbeef, bytes32(0), executionCalldata);
+        bytes memory callData = abi.encodePacked(bytes4(0x8dd7712f), wrongInner);
+        
+        PackedUserOperation memory userOp;
+        userOp.sender = account;
+        userOp.nonce = 1;
+        userOp.callData = callData;
+        _signAndSetSig(userOp);
+        
+        vm.expectRevert(AegisMindPolicy.InvalidSelector.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Revert_DelegateCall() public {
+        // CALLTYPE_DELEGATECALL = 0xff in first byte of ExecMode
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = _buildV3SwapInput(account, 500e6, 490e6, _buildValidPath(), true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00;
+        bytes memory routerCallData = _buildRouterCallData(commands, inputs, block.timestamp + 100);
+        bytes memory executionCalldata = abi.encodePacked(UNIVERSAL_ROUTER, uint256(0), routerCallData);
+        
+        bytes32 delegateMode = bytes32(bytes1(0xff)); // delegatecall
+        bytes memory executePayload = abi.encodeWithSelector(0xe9ae5c53, delegateMode, executionCalldata);
+        bytes memory callData = abi.encodePacked(bytes4(0x8dd7712f), executePayload);
+        
+        PackedUserOperation memory userOp;
+        userOp.sender = account;
+        userOp.nonce = 1;
+        userOp.callData = callData;
+        _signAndSetSig(userOp);
+        
+        vm.expectRevert(AegisMindPolicy.InvalidCallType.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
     }
 
     function test_Revert_WrongRecipient() public {
@@ -113,16 +197,13 @@ contract AegisMindPolicyTest is Test {
         bytes memory commands = new bytes(1);
         commands[0] = 0x00; 
         
-        bytes memory callData = _buildExecuteCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
         
         PackedUserOperation memory userOp;
         userOp.sender = account;
         userOp.nonce = 1;
         userOp.callData = callData;
-        
-        bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(securitySignerKey, surrogateHash.toEthSignedMessageHash());
-        userOp.signature = abi.encodePacked(r, s, v);
+        _signAndSetSig(userOp);
         
         vm.expectRevert(AegisMindPolicy.InvalidTarget.selector);
         policy.checkUserOpPolicy(PERMISSION_ID, userOp);
@@ -137,18 +218,56 @@ contract AegisMindPolicyTest is Test {
         bytes memory commands = new bytes(1);
         commands[0] = 0x00; 
         
-        bytes memory callData = _buildExecuteCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        
+        PackedUserOperation memory userOp;
+        userOp.sender = account;
+        userOp.nonce = 1;
+        userOp.callData = callData;
+        _signAndSetSig(userOp);
+        
+        vm.expectRevert(AegisMindPolicy.InvalidToken.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Revert_WrongRouter() public {
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = _buildV3SwapInput(account, 500e6, 490e6, _buildValidPath(), true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00;
+        
+        // Target is not Universal Router
+        bytes memory callData = _buildCallData(address(0xbad), 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        
+        PackedUserOperation memory userOp;
+        userOp.sender = account;
+        userOp.nonce = 1;
+        userOp.callData = callData;
+        _signAndSetSig(userOp);
+        
+        vm.expectRevert(AegisMindPolicy.InvalidTarget.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Revert_InvalidAISignature() public {
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = _buildV3SwapInput(account, 500e6, 490e6, _buildValidPath(), true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00;
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
         
         PackedUserOperation memory userOp;
         userOp.sender = account;
         userOp.nonce = 1;
         userOp.callData = callData;
         
+        // Sign with wrong key
+        (,uint256 wrongKey) = makeAddrAndKey("wrongSigner");
         bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(securitySignerKey, surrogateHash.toEthSignedMessageHash());
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, surrogateHash.toEthSignedMessageHash());
         userOp.signature = abi.encodePacked(r, s, v);
         
-        vm.expectRevert(AegisMindPolicy.InvalidToken.selector);
+        vm.expectRevert(AegisMindPolicy.Unauthorized.selector);
         policy.checkUserOpPolicy(PERMISSION_ID, userOp);
     }
 
