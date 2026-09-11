@@ -5,3 +5,4 @@ script = "contracts/script"
 libs = ["lib"]
 
 chain_id = 84532
+fs_permissions = [{ access = "read", path = "./e2e_payloads.json" }]

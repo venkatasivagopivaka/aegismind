@@ -61,7 +61,7 @@ contract Phase1B_IntegrationTest is Test {
 
     address constant USDC_ADDR = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
     address constant WETH_ADDR = 0x4200000000000000000000000000000000000006;
-    address constant ROUTER_ADDR = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
+    address constant ROUTER_ADDR = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
 
     function setUp() public {
         owner = makeAccount("owner");

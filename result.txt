@@ -1,0 +1,7 @@
+{
+  "code": -32521,
+  "message": "execution reverted",
+  "data": {
+    "revertData": "0xf21e646b"
+  }
+}

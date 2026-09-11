@@ -1,0 +1,8 @@
+{
+  "code": -32500,
+  "message": "validation reverted: [reason]: AA23 reverted",
+  "data": {
+    "reason": "AA23 reverted",
+    "revertData": "0x82d5d76a"
+  }
+}

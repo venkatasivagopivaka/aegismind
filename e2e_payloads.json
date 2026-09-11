@@ -1,0 +1,66 @@
+{
+  "testA": {
+    "status": "SUCCESS",
+    "rawModelOutput": {
+      "action": "SWAP_EXACT_IN",
+      "tokenIn": "USDC",
+      "tokenOut": "WETH",
+      "amountInUnits": "400",
+      "reasoning": "Test valid treasury swap",
+      "confidence": 0.9
+    },
+    "proposal": {
+      "action": "SWAP_EXACT_IN",
+      "tokenIn": "USDC",
+      "tokenOut": "WETH",
+      "amountInUnits": "400",
+      "reasoning": "Test valid treasury swap",
+      "confidence": 0.9
+    },
+    "unsignedUserOp": {
+      "sender": "0x0000000000000000000000000000000000000000",
+      "nonce": "0",
+      "initCode": "0x",
+      "callData": "0x8dd7712fe9ae5c530000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000002388b844f885672f333bc0042cb669255f93a4c1e6b00000000000000000000000000000000000000000000000000000000000000003593564c000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000003b9acb2c0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000017d7840000000000000000000000000000000000000000000000000001c202a9878caaab00000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002b036cbd53842c5426634e7929541ec2318f3dcf7e0001f442000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000",
+      "accountGasLimits": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "preVerificationGas": "1000000",
+      "gasFees": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "paymasterAndData": "0x",
+      "signature": "0x"
+    }
+  },
+  "testB": {
+    "status": "BUILDER_REJECTED",
+    "rawModelOutput": {
+      "action": "SWAP_EXACT_IN",
+      "tokenIn": "USDC",
+      "tokenOut": "WETH",
+      "amountInUnits": "2000",
+      "reasoning": "Malicious oversized trade",
+      "confidence": 1
+    },
+    "proposal": {
+      "action": "SWAP_EXACT_IN",
+      "tokenIn": "USDC",
+      "tokenOut": "WETH",
+      "amountInUnits": "2000",
+      "reasoning": "Malicious oversized trade",
+      "confidence": 1
+    },
+    "validationError": "Trade amount exceeds builder-side ceiling of 500000000 base units"
+  },
+  "testD": {
+    "status": "PROPOSAL_VALIDATION_FAILED",
+    "rawModelOutput": {
+      "action": "SWAP_EXACT_IN",
+      "tokenIn": "USDC",
+      "tokenOut": "WETH",
+      "amountInUnits": "400",
+      "reasoning": "Smuggle",
+      "confidence": 1,
+      "recipient": "0xHacker",
+      "calldata": "0xbad"
+    },
+    "validationError": "[\n  {\n    \"code\": \"unrecognized_keys\",\n    \"keys\": [\n      \"recipient\",\n      \"calldata\"\n    ],\n    \"path\": [],\n    \"message\": \"Unrecognized keys: \\\"recipient\\\", \\\"calldata\\\"\"\n  }\n]"
+  }
+}

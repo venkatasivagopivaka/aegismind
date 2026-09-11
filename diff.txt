@@ -1,0 +1,176 @@
+diff --git a/.env.example b/.env.example
+index 0bd7f4c..1a3921c 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1 +1,10 @@
+-# Copy to .env and add local, non-committed configuration values.
++# The Graph GraphQL Endpoint
++# Example: https://gateway.thegraph.com/api/YOUR_API_KEY_HERE/subgraphs/id/FQ6JTvwCUCPjcbbQ7pGkXEN4JgJ2j5d5vSgqVq3qH6Y3
++GRAPH_ENDPOINT=
++
++# Deployment Configuration (Base Sepolia)
++BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
++DEPLOYER_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000000
++BASE_SEPOLIA_CHAINLINK_FEED=0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1
++MAX_SLIPPAGE_BPS=100
++MAX_STALENESS=3600
+diff --git a/AI_USAGE.md b/AI_USAGE.md
+index 039b419..3acad87 100644
+--- a/AI_USAGE.md
++++ b/AI_USAGE.md
+@@ -1,3 +1,61 @@
+-# AI Usage
++# AI Usage and Architecture
+ 
+-AI usage documentation will be added as the project develops.
++## Core Principle
++"The AI chooses what it wants to do. It never gets to decide what it is allowed to do."
++
++## Trust Boundary
++
++The AI is treated as an **UNTRUSTED** actor. The AI outputs an intent object known as a `TradeProposal`. 
++
++The `TradeProposal` is strictly an UNTRUSTED SEMANTIC INTENT. 
++
++*   `TradeProposal` ≠ `UserOperation`
++*   `TradeProposal` ≠ raw calldata
++*   `TradeProposal` ≠ authorization
++
++### Deterministic Builder
++A deterministic TypeScript builder acts as a TRANSLATION layer. The builder validates and translates the AI's intent into executable calldata; it does not replace on-chain authorization. It takes the highly restricted `TradeProposal`, resolves required parameters (like setting the recipient to `address(1)`, resolving tokens to the exact Uniswap V3 path, formatting the `Kernel` selectors), and constructs a `PackedUserOperation`. 
++
++### Security/Authorization Infrastructure
++The final authorization boundary remains entirely on-chain. The following deterministic smart contracts are the sole authorities on what is permitted:
++*   `AegisMindPolicy`
++*   `AegisMindHook`
++*   `Kernel`
++*   `EntryPoint`
++
++### Current MVP Limitations
++The AI MVP currently supports exactly one semantic action: **USDC → WETH** swaps via Universal Router `SWAP_EXACT_IN`. The AI cannot specify target contracts, custom calldata, alternative routers, or recipients.
++
++## The Graph Intelligence Integration (Phase 2F)
++
++AegisMind integrates **The Graph** as a load-bearing but untrusted source of blockchain intelligence.
++
++### 1. What data is retrieved from The Graph
++We query the Uniswap V3 subgraph (e.g., Base/Base Sepolia) to retrieve the USDC/WETH `pool` entity. We observe `liquidity`, `volumeUSD`, `token0Price`, and `token1Price`.
++
++### 2. Why the data is useful
++It informs the AI's risk/decision context. By observing pool liquidity and recent volume, the Agent can infer market conditions and avoid proposing trades during extreme volatility or insufficient liquidity.
++
++### 3. Why the data is untrusted
++Graph data is subject to staleness, indexing delays, malformed subgraph logic, or even external market manipulation. Therefore, it is treated purely as **OBSERVATION**.
++
++### 4. How stale/unavailable data is handled
++The `GraphAdapter` parses all responses through strict Zod schemas and normalizes failures into distinct states (`GRAPH_OK`, `GRAPH_UNAVAILABLE`, `GRAPH_INVALID`, `GRAPH_EMPTY`). The AI sees these explicit failure states, preventing silent zeroes from distorting decisions.
++
++### 5. How Graph observations reach the Agent
++It is injected into the Agent's `ObservationContext.graphObservation`. The AI receives it passively.
++
++### 6. Why Graph data cannot authorize transactions
++The Agent translates its observations into a semantic `TradeProposal`. This proposal must pass the deterministic `UserOpBuilder` and the on-chain `AegisMindHook`/`AegisMindPolicy`. The Graph has ZERO representation in the Zod schema or on-chain logic.
++
++### 7. What remains enforced on-chain
++Daily spending limits (e.g., $500/day), execution price/slippage (Chainlink), router whitelist, and token constraints remain rigorously enforced by `AegisMindHook` and `AegisMindPolicy`.
++
++### 8. Which Graph endpoint/subgraph is used
++The adapter is provider-neutral, expecting a standard GraphQL endpoint. We default to querying a standard Uniswap V3 deployment subgraph.
++
++### 9. Environment Requirements
++A `.env` file should configure `GRAPH_API_KEY` or `GRAPH_ENDPOINT` if required by the gateway. API keys must NEVER be exposed in frontend bundles or committed to source control.
++
++### 10. Limitations
++The intelligence is currently limited to snapshot state (liquidity/price) and does not natively implement historical aggregation (which would require more complex queries).
+diff --git a/contracts/src/AegisMindHook.sol b/contracts/src/AegisMindHook.sol
+index c4e6ffa..0f47bee 100644
+--- a/contracts/src/AegisMindHook.sol
++++ b/contracts/src/AegisMindHook.sol
+@@ -35,7 +35,7 @@ contract AegisMindHook is IHook {
+     error InvalidToken();
+ 
+     bytes4 public constant KERNEL_EXECUTE_SELECTOR = 0xe9ae5c53;
+-    address public constant UNIVERSAL_ROUTER = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
++    address public constant UNIVERSAL_ROUTER = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
+     
+     address public constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+     address public constant WETH = 0x4200000000000000000000000000000000000006;
+diff --git a/contracts/src/AegisMindPolicy.sol b/contracts/src/AegisMindPolicy.sol
+index de0a64a..d7fe6da 100644
+--- a/contracts/src/AegisMindPolicy.sol
++++ b/contracts/src/AegisMindPolicy.sol
+@@ -28,7 +28,7 @@ contract AegisMindPolicy is IPolicy {
+     // Base Sepolia Official Addresses
+     address public constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+     address public constant WETH = 0x4200000000000000000000000000000000000006;
+-    address public constant UNIVERSAL_ROUTER = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
++    address public constant UNIVERSAL_ROUTER = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
+ 
+     // Kernel executeUserOp selector: executeUserOp(PackedUserOperation,bytes32)
+     // Required outer wrapper when Permission validation has an attached Hook.
+diff --git a/contracts/test/AegisMindHook.t.sol b/contracts/test/AegisMindHook.t.sol
+index 1f7daf8..84ef7bc 100644
+--- a/contracts/test/AegisMindHook.t.sol
++++ b/contracts/test/AegisMindHook.t.sol
+@@ -41,7 +41,7 @@ contract AegisMindHookTest is Test {
+     AegisMindHook public hook;
+     MockChainlinkFeed public feed;
+     
+-    address public constant UNIVERSAL_ROUTER = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
++    address public constant UNIVERSAL_ROUTER = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
+     address public constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+     address public constant WETH = 0x4200000000000000000000000000000000000006;
+     
+diff --git a/contracts/test/AegisMindPolicy.t.sol b/contracts/test/AegisMindPolicy.t.sol
+index 8e1256e..59231cd 100644
+--- a/contracts/test/AegisMindPolicy.t.sol
++++ b/contracts/test/AegisMindPolicy.t.sol
+@@ -11,7 +11,7 @@ contract AegisMindPolicyTest is Test {
+ 
+     AegisMindPolicy public policy;
+     
+-    address public constant UNIVERSAL_ROUTER = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
++    address public constant UNIVERSAL_ROUTER = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
+     address public constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+     address public constant WETH = 0x4200000000000000000000000000000000000006;
+     
+diff --git a/contracts/test/integration/Phase1B_Integration.t.sol b/contracts/test/integration/Phase1B_Integration.t.sol
+index ffe3c45..f894850 100644
+--- a/contracts/test/integration/Phase1B_Integration.t.sol
++++ b/contracts/test/integration/Phase1B_Integration.t.sol
+@@ -61,7 +61,7 @@ contract Phase1B_IntegrationTest is Test {
+ 
+     address constant USDC_ADDR = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+     address constant WETH_ADDR = 0x4200000000000000000000000000000000000006;
+-    address constant ROUTER_ADDR = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
++    address constant ROUTER_ADDR = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
+ 
+     function setUp() public {
+         owner = makeAccount("owner");
+diff --git a/foundry.toml b/foundry.toml
+index 1eaa1a0..7e4bb2f 100644
+--- a/foundry.toml
++++ b/foundry.toml
+@@ -5,3 +5,4 @@ script = "contracts/script"
+ libs = ["lib"]
+ 
+ chain_id = 84532
++fs_permissions = [{ access = "read", path = "./e2e_payloads.json" }]
+diff --git a/package.json b/package.json
+index 3d48214..fcd3701 100644
+--- a/package.json
++++ b/package.json
+@@ -6,5 +6,13 @@
+   ],
+   "scripts": {
+     "typecheck": "tsc --noEmit"
++  },
++  "devDependencies": {
++    "@types/node": "^26.5.0",
++    "ethers": "^6.17.0",
++    "tsx": "^4.23.13",
++    "typescript": "^7.0.2",
++    "vitest": "^5.0.0",
++    "zod": "^4.5.4"
+   }
+ }

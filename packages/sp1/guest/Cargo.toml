@@ -1,0 +1,9 @@
+[package]
+name = "aegismind-guest"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared = { path = "../shared" }
+sp1-zkvm = "3.0.0"
+serde = { version = "1.0", features = ["derive"] }

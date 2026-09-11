@@ -28,7 +28,7 @@ contract AegisMindPolicy is IPolicy {
     // Base Sepolia Official Addresses
     address public constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
     address public constant WETH = 0x4200000000000000000000000000000000000006;
-    address public constant UNIVERSAL_ROUTER = 0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD;
+    address public constant UNIVERSAL_ROUTER = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
 
     // Kernel executeUserOp selector: executeUserOp(PackedUserOperation,bytes32)
     // Required outer wrapper when Permission validation has an attached Hook.
