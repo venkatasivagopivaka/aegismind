@@ -3,25 +3,20 @@ pragma solidity ^0.8.21;
 
 import {IPolicy} from "kernel/src/interfaces/IERC7579Modules.sol";
 import {PackedUserOperation} from "kernel/src/interfaces/PackedUserOperation.sol";
-import {ECDSA} from "solady/utils/ECDSA.sol";
 
 /**
  * @title AegisMindPolicy
  * @notice Phase 1A static authorization policy for AegisMind.
- *         Enforces Target, Command, one-hop USDC->WETH Token path, and ECDSA signature.
+ *         Enforces Target, Command, one-hop USDC->WETH Token path.
  *         Must be combined with AegisMindHook for daily limits and oracle slippage.
  */
 contract AegisMindPolicy is IPolicy {
-    using ECDSA for bytes32;
 
-    error AegisMindAlreadyInitialized();
     error InvalidSelector();
     error InvalidCallType();
     error InvalidTarget();
     error InvalidCommand();
     error InvalidToken();
-    error Unauthorized();
-    error InvalidSignatureLength();
     error SignatureValidationNotSupported();
     error MalformedCalldata();
 
@@ -31,38 +26,21 @@ contract AegisMindPolicy is IPolicy {
     address public constant UNIVERSAL_ROUTER = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
 
     // Kernel executeUserOp selector: executeUserOp(PackedUserOperation,bytes32)
-    // Required outer wrapper when Permission validation has an attached Hook.
     bytes4 public constant EXECUTE_USER_OP_SELECTOR = 0x8dd7712f;
 
     // Kernel execute selector: execute(bytes32,bytes)
     bytes4 public constant KERNEL_EXECUTE_SELECTOR = 0xe9ae5c53;
 
-    struct PolicyState {
-        address securitySigner;
-    }
+    function onInstall(bytes calldata) external payable override {}
 
-    // ERC-7562 Compliant Storage: mapping(address => mapping(bytes32 => PolicyState))
-    mapping(address => mapping(bytes32 => PolicyState)) public policyStates;
-
-    function onInstall(bytes calldata data) external payable override {
-        (bytes32 permissionId, address signer) = abi.decode(data, (bytes32, address));
-        if (policyStates[msg.sender][permissionId].securitySigner != address(0)) {
-            revert AegisMindAlreadyInitialized();
-        }
-        policyStates[msg.sender][permissionId].securitySigner = signer;
-    }
-
-    function onUninstall(bytes calldata data) external payable override {
-        bytes32 permissionId = abi.decode(data, (bytes32));
-        delete policyStates[msg.sender][permissionId];
-    }
+    function onUninstall(bytes calldata) external payable override {}
 
     function isModuleType(uint256 moduleTypeId) external pure override returns (bool) {
         return moduleTypeId == 5; // MODULE_TYPE_POLICY
     }
 
     function isInitialized(address smartAccount) external view override returns (bool) {
-        return false; 
+        return true; 
     }
 
     function checkUserOpPolicy(bytes32 id, PackedUserOperation calldata userOp)
@@ -71,29 +49,16 @@ contract AegisMindPolicy is IPolicy {
         override
         returns (uint256)
     {
-        address signer = policyStates[userOp.sender][id].securitySigner;
-        if (signer == address(0)) revert Unauthorized();
-
-        // 1. Authenticate auxiliary signature
-        bytes calldata policySig = userOp.signature;
-        if (policySig.length != 65) revert InvalidSignatureLength();
-
-        bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
-        address recovered = surrogateHash.toEthSignedMessageHash().recover(policySig);
-        if (recovered != signer) revert Unauthorized();
-
-        // 2. Enforce executeUserOp outer wrapper + nested execute selector
-        //    Kernel v3.3 requires executeUserOp wrapper when a Permission Hook is attached.
-        //    Layout: [0:4] = executeUserOp selector, [4:8] = execute selector, [8:] = execute ABI args
+        // 1. Enforce executeUserOp outer wrapper + nested execute selector
         if (userOp.callData.length < 104) revert MalformedCalldata();
         if (bytes4(userOp.callData[0:4]) != EXECUTE_USER_OP_SELECTOR) revert InvalidSelector();
         if (bytes4(userOp.callData[4:8]) != KERNEL_EXECUTE_SELECTOR) revert InvalidSelector();
 
-        // 3. Enforce CALLTYPE_SINGLE (parse execute args from offset 8)
+        // 2. Enforce CALLTYPE_SINGLE (parse execute args from offset 8)
         (bytes32 mode, bytes memory executionCalldata) = abi.decode(userOp.callData[8:], (bytes32, bytes));
         if (bytes1(mode) != 0x00) revert InvalidCallType();
 
-        // 4. Extract ExecutionCalldata (target, value, innerCalldata)
+        // 3. Extract ExecutionCalldata (target, value, innerCalldata)
         if (executionCalldata.length < 52) revert MalformedCalldata();
         address target;
         uint256 value;
@@ -105,10 +70,10 @@ contract AegisMindPolicy is IPolicy {
         if (target != UNIVERSAL_ROUTER) revert InvalidTarget();
         if (value != 0) revert MalformedCalldata(); // ETH value transfers explicitly blocked
 
-        // 5. Decode and enforce Universal Router V3_SWAP_EXACT_IN parameters
+        // 4. Decode and enforce Universal Router V3_SWAP_EXACT_IN parameters
         uint48 deadline = _verifyUniversalRouterCall(executionCalldata, userOp.sender);
 
-        // 6. Return ERC-7562 validation data
+        // 5. Return ERC-7562 validation data (no signature failure possible here)
         return _packValidationData(false, deadline, 0);
     }
 

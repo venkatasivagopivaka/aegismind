@@ -3,66 +3,75 @@ pragma solidity ^0.8.21;
 
 import {ISigner} from "kernel/src/interfaces/IERC7579Modules.sol";
 import {PackedUserOperation} from "kernel/src/interfaces/PackedUserOperation.sol";
+import {ECDSA} from "solady/utils/ECDSA.sol";
 
 /**
  * @title AegisMindPassSigner
- * @dev A deliberately empty, stateless ISigner module for ZeroDev Kernel v3.3.
- *
- * ARCHITECTURE NOTE:
- * This contract is paired strictly with `AegisMindPolicy`. 
- * The `AegisMindPolicy` assumes 100% cryptographic authority by executing
- * ECDSA.recover on a custom surrogateHash (sender, nonce, callData). 
- * Because the AI agent must sign the surrogateHash to satisfy the Policy, 
- * demanding a second ERC-4337 userOpHash signature is redundant and disruptive.
- * 
- * Therefore, this PassSigner simply satisfies the ValidationManager's structural 
- * requirement for a trailing `ISigner` module (Module Type 6), but defers all
- * cryptographic authority securely to the preceding Policy layer.
- *
- * SECURITY PROPERTIES:
- * - No owner or mutable state (immune to state-corruption).
- * - No external calls (immune to reentrancy).
- * - Implements strict Type 6 (ISigner) identification.
- * - Always returns validation success (0) and ERC1271 success.
+ * @dev Re-architected as a standard cryptographic ECDSA signer that authenticates 
+ *      the canonical ERC-4337 `userOpHash`.
  */
 contract AegisMindPassSigner is ISigner {
-    uint256 constant SIG_VALIDATION_SUCCESS = 0;
+    using ECDSA for bytes32;
+
+    uint256 constant SIG_VALIDATION_SUCCESS_UINT = 0;
+    uint256 constant SIG_VALIDATION_FAILED_UINT = 1;
     bytes4 constant ERC1271_MAGICVALUE = 0x1626ba7e;
+    bytes4 constant ERC1271_INVALID = 0xffffffff;
     uint256 constant MODULE_TYPE_SIGNER = 6;
 
-    /// @notice Accepts installation unconditionally (stateless)
-    function onInstall(bytes calldata) external payable override {}
+    // KernelAccount => PermissionId => Signer
+    mapping(address => mapping(bytes32 => address)) public permissionSigners;
 
-    /// @notice Accepts uninstallation unconditionally (stateless)
-    function onUninstall(bytes calldata) external payable override {}
+    function onInstall(bytes calldata data) external payable override {
+        (bytes32 permissionId, address signer) = abi.decode(data, (bytes32, address));
+        require(signer != address(0), "Invalid signer");
+        permissionSigners[msg.sender][permissionId] = signer;
+    }
 
-    /// @notice Confirms this module is strictly a Signer (Type 6)
+    function onUninstall(bytes calldata data) external payable override {
+        bytes32 permissionId = abi.decode(data, (bytes32));
+        delete permissionSigners[msg.sender][permissionId];
+    }
+
     function isModuleType(uint256 typeID) external pure override returns (bool) {
         return typeID == MODULE_TYPE_SIGNER;
     }
 
-    /// @notice Unconditionally initialized since there is no state
-    function isInitialized(address) external pure override returns (bool) {
+    function isInitialized(address smartAccount) external view override returns (bool) {
         return true;
     }
 
-    /// @notice Satisfies the ValidationManager check safely via Policy delegation
-    function checkUserOpSignature(bytes32, PackedUserOperation calldata, bytes32)
+    function checkUserOpSignature(bytes32 id, PackedUserOperation calldata userOp, bytes32 userOpHash)
         external
         payable
         override
         returns (uint256)
     {
-        return SIG_VALIDATION_SUCCESS;
+        address expectedSigner = permissionSigners[msg.sender][id];
+        if (expectedSigner == address(0)) return SIG_VALIDATION_FAILED_UINT;
+
+        bytes32 ethHash = userOpHash.toEthSignedMessageHash();
+        address recovered = ethHash.recover(userOp.signature);
+
+        if (recovered != expectedSigner) return SIG_VALIDATION_FAILED_UINT;
+
+        return SIG_VALIDATION_SUCCESS_UINT;
     }
 
-    /// @notice Satisfies ERC1271 safely via Policy delegation
-    function checkSignature(bytes32, address, bytes32, bytes calldata)
+    function checkSignature(bytes32 id, address sender, bytes32 hash, bytes calldata sig)
         external
         view
         override
         returns (bytes4)
     {
+        address expectedSigner = permissionSigners[msg.sender][id];
+        if (expectedSigner == address(0)) return ERC1271_INVALID;
+
+        bytes32 ethHash = hash.toEthSignedMessageHash();
+        address recovered = ethHash.recover(sig);
+
+        if (recovered != expectedSigner) return ERC1271_INVALID;
+
         return ERC1271_MAGICVALUE;
     }
 }

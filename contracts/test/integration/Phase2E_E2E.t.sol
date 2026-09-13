@@ -31,12 +31,12 @@ contract Phase2E_E2E is Phase1B_IntegrationTest {
         userOp.preVerificationGas = 1000000;
         userOp.gasFees = bytes32(abi.encodePacked(uint128(10 gwei), uint128(10 gwei)));
 
-        bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aiAgent.key, surrogateHash.toEthSignedMessageHash());
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aiAgent.key, userOpHash.toEthSignedMessageHash());
         
         // This is a direct mock signer implementation mimicking ValidationManager signature format:
         bytes memory aiSignature = abi.encodePacked(r, s, v);
-        userOp.signature = abi.encodePacked(uint8(0), uint64(65), aiSignature, uint8(255));
+        userOp.signature = abi.encodePacked(uint8(0), uint64(0), uint8(255), aiSignature);
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = userOp;

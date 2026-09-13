@@ -18,7 +18,7 @@ import "../../src/AegisMindPolicy.sol";
 import "../../src/AegisMindHook.sol";
 import "../mocks/MockChainlinkFeed.sol";
 import "../mocks/MockUniversalRouter.sol";
-import "../mocks/MockSigner.sol";
+import "../../src/AegisMindPassSigner.sol";
 import "solady/tokens/ERC20.sol";
 import "solady/utils/ECDSA.sol";
 
@@ -48,7 +48,7 @@ contract Phase1B_IntegrationTest is Test {
     MockWETH weth;
     MockChainlinkFeed feed;
     MockUniversalRouter router;
-    MockSigner mockSigner;
+    AegisMindPassSigner passSigner;
 
     AegisMindPolicy policy;
     AegisMindHook hook;
@@ -86,7 +86,7 @@ contract Phase1B_IntegrationTest is Test {
         router.setMockAmountOut(160e15);
 
         feed = new MockChainlinkFeed();
-        mockSigner = new MockSigner();
+        passSigner = new AegisMindPassSigner();
 
         policy = new AegisMindPolicy();
         hook = new AegisMindHook(address(feed), 500, 3600); // 5% slippage
@@ -133,8 +133,8 @@ contract Phase1B_IntegrationTest is Test {
         configs[0] = ValidationManager.ValidationConfig({nonce: 1, hook: IHook(address(hook))});
 
         bytes[] memory permDataArray = new bytes[](2);
-        permDataArray[0] = abi.encodePacked(bytes2(0), address(policy), abi.encode(aiAgent.addr));
-        permDataArray[1] = abi.encodePacked(bytes2(0), address(mockSigner));
+        permDataArray[0] = abi.encodePacked(bytes2(0), address(policy), "");
+        permDataArray[1] = abi.encodePacked(bytes2(0), address(passSigner), abi.encode(aiAgent.addr));
 
         bytes[] memory valDatas = new bytes[](1);
         valDatas[0] = abi.encode(permDataArray);
@@ -183,12 +183,12 @@ contract Phase1B_IntegrationTest is Test {
         userOp.gasFees = bytes32(abi.encodePacked(uint128(10 gwei), uint128(10 gwei)));
 
         // AI Agent signs the Policy's surrogateHash
-        bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aiAgent.key, surrogateHash.toEthSignedMessageHash());
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aiAgent.key, userOpHash.toEthSignedMessageHash());
         bytes memory aiSignature = abi.encodePacked(r, s, v);
 
         // Pack the signature for ValidationManager
-        userOp.signature = abi.encodePacked(uint8(0), uint64(65), aiSignature, uint8(255));
+        userOp.signature = abi.encodePacked(uint8(0), uint64(0), uint8(255), aiSignature);
 
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = userOp;
@@ -209,5 +209,42 @@ contract Phase1B_IntegrationTest is Test {
         (, uint256 spentToday,, bool paused) = hook.treasuryStates(address(kernel));
         assertEq(spentToday, 500e6, "Spending limit not updated");
         assertFalse(paused, "Should not be paused");
+    }
+    function test_Revert_GasMalleability() public {
+        PackedUserOperation memory userOp;
+        userOp.sender = address(kernel);
+        userOp.nonce = ValidatorLib.encodePermissionAsNonce(0x00, PERMISSION_ID, 0, 0);
+
+        bytes[] memory inputs = new bytes[](1);
+        bytes memory path = abi.encodePacked(address(usdc), uint24(500), address(weth));
+        inputs[0] = _buildV3SwapInput(address(1), 500e6, 159e15, path, true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00; 
+        
+        bytes memory routerCallData = abi.encodeWithSelector(0x3593564c, commands, inputs, block.timestamp + 100);
+        bytes memory executionCalldata = abi.encodePacked(address(router), uint256(0), routerCallData);
+        
+        bytes memory executePayload = abi.encodeWithSelector(0xe9ae5c53, bytes32(0), executionCalldata);
+        userOp.callData = abi.encodePacked(Kernel.executeUserOp.selector, executePayload);
+
+        userOp.accountGasLimits = bytes32(abi.encodePacked(uint128(2000000), uint128(2000000)));
+        userOp.preVerificationGas = 1000000;
+        userOp.gasFees = bytes32(abi.encodePacked(uint128(10 gwei), uint128(10 gwei)));
+
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aiAgent.key, userOpHash.toEthSignedMessageHash());
+        bytes memory aiSignature = abi.encodePacked(r, s, v);
+
+        // Pack the signature for ValidationManager
+        userOp.signature = abi.encodePacked(uint8(0), uint64(0), uint8(255), aiSignature);
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+
+        // MALLEATE GAS AFTER SIGNING
+        ops[0].preVerificationGas = 10_000_000;
+
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
     }
 }
