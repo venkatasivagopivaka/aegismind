@@ -249,30 +249,103 @@ contract AegisMindPolicyTest is Test {
         policy.checkUserOpPolicy(PERMISSION_ID, userOp);
     }
 
-    function IGNORE_test_Revert_InvalidAISignature() public {
+
+    function test_Revert_CheckSignaturePolicy() public {
+        vm.expectRevert(AegisMindPolicy.SignatureValidationNotSupported.selector);
+        policy.checkSignaturePolicy(PERMISSION_ID, address(0), bytes32(0), "");
+    }
+    function _buildValidUserOpWithAmount(uint256 amount) internal view returns (PackedUserOperation memory) {
         bytes[] memory inputs = new bytes[](1);
-        inputs[0] = _buildV3SwapInput(account, 500e6, 490e6, _buildValidPath(), true);
+        inputs[0] = _buildV3SwapInput(address(1), amount, 0, _buildValidPath(), true);
+        
         bytes memory commands = new bytes(1);
         commands[0] = 0x00;
-        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        
+        bytes memory routerCallData = _buildRouterCallData(commands, inputs, block.timestamp + 100);
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, routerCallData);
         
         PackedUserOperation memory userOp;
         userOp.sender = account;
         userOp.nonce = 1;
         userOp.callData = callData;
         
-        // Sign with wrong key
-        (,uint256 wrongKey) = makeAddrAndKey("wrongSigner");
-        bytes32 surrogateHash = keccak256(abi.encode(userOp.sender, userOp.nonce, userOp.callData));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, surrogateHash.toEthSignedMessageHash());
-        userOp.signature = abi.encodePacked(r, s, v);
+        return userOp;
+    }
+
+    function test_Success_499_999999_USDC() public {
+        PackedUserOperation memory userOp = _buildValidUserOpWithAmount(499999999);
+        uint256 val = policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+        assertEq(val & 1, 0);
+    }
+
+    function test_Success_Exactly_500_USDC() public {
+        PackedUserOperation memory userOp = _buildValidUserOpWithAmount(500e6);
+        uint256 val = policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+        assertEq(val & 1, 0);
+    }
+
+    function test_Revert_500_000001_USDC() public {
+        PackedUserOperation memory userOp = _buildValidUserOpWithAmount(500000001);
+        vm.expectRevert(AegisMindPolicy.ExceedsMaxAmount.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Revert_2000_USDC() public {
+        PackedUserOperation memory userOp = _buildValidUserOpWithAmount(2000e6);
+        vm.expectRevert(AegisMindPolicy.ExceedsMaxAmount.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Revert_MalformedAmount() public {
+        // Build an invalid input array that is too short to be decoded properly
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = abi.encode(address(1)); // Missing amountIn, etc.
         
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00;
+        
+        bytes memory routerCallData = _buildRouterCallData(commands, inputs, block.timestamp + 100);
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, routerCallData);
+        
+        PackedUserOperation memory userOp;
+        userOp.sender = account;
+        userOp.nonce = 1;
+        userOp.callData = callData;
+        
+        vm.expectRevert(); // Typically revert without custom error due to abi.decode failing
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+    function test_Revert_WrongPayerMode() public {
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = abi.encode(address(1), 500e6, 0, _buildValidPath(), false); // payerIsUser = false
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00;
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        PackedUserOperation memory userOp; userOp.sender = account; userOp.nonce = 1; userOp.callData = callData;
+        vm.expectRevert(AegisMindPolicy.InvalidTarget.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Revert_MalformedPathLength() public {
+        bytes[] memory inputs = new bytes[](1);
+        bytes memory badPath = new bytes(42); // Not 43
+        inputs[0] = _buildV3SwapInput(address(1), 500e6, 0, badPath, true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00;
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        PackedUserOperation memory userOp; userOp.sender = account; userOp.nonce = 1; userOp.callData = callData;
         vm.expectRevert(AegisMindPolicy.MalformedCalldata.selector);
         policy.checkUserOpPolicy(PERMISSION_ID, userOp);
     }
 
-    function IGNORE_test_Revert_CheckSignaturePolicy() public {
-        vm.expectRevert(AegisMindPolicy.SignatureValidationNotSupported.selector);
-        policy.checkSignaturePolicy(PERMISSION_ID, address(0), bytes32(0), "");
+    function test_Revert_WrongCommand() public {
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = _buildV3SwapInput(address(1), 500e6, 0, _buildValidPath(), true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x01; // V3_SWAP_EXACT_OUT instead of V3_SWAP_EXACT_IN (0x00)
+        bytes memory callData = _buildCallData(UNIVERSAL_ROUTER, 0, _buildRouterCallData(commands, inputs, block.timestamp + 100));
+        PackedUserOperation memory userOp; userOp.sender = account; userOp.nonce = 1; userOp.callData = callData;
+        vm.expectRevert(AegisMindPolicy.InvalidCommand.selector);
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
     }
 }

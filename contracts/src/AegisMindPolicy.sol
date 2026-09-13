@@ -19,11 +19,15 @@ contract AegisMindPolicy is IPolicy {
     error InvalidToken();
     error SignatureValidationNotSupported();
     error MalformedCalldata();
+    error ExceedsMaxAmount();
 
     // Base Sepolia Official Addresses
     address public constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
     address public constant WETH = 0x4200000000000000000000000000000000000006;
     address public constant UNIVERSAL_ROUTER = 0x8B844f885672f333Bc0042cB669255f93a4C1E6b;
+
+    // Per-transaction limit
+    uint256 public constant MAX_TRANSACTION_AMOUNT = 500e6;
 
     // Kernel executeUserOp selector: executeUserOp(PackedUserOperation,bytes32)
     bytes4 public constant EXECUTE_USER_OP_SELECTOR = 0x8dd7712f;
@@ -101,8 +105,9 @@ contract AegisMindPolicy is IPolicy {
         if (commands.length != 1 || commands[0] != 0x00) revert InvalidCommand();
         if (inputs.length != 1) revert MalformedCalldata();
 
-        (address recipient, , , bytes memory path, bool payerIsUser) = abi.decode(inputs[0], (address, uint256, uint256, bytes, bool));
+        (address recipient, uint256 amountIn, , bytes memory path, bool payerIsUser) = abi.decode(inputs[0], (address, uint256, uint256, bytes, bool));
         
+        if (amountIn > MAX_TRANSACTION_AMOUNT) revert ExceedsMaxAmount();
         if (recipient != address(1) && recipient != sender) revert InvalidTarget();
         if (!payerIsUser) revert InvalidTarget();
 

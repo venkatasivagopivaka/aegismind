@@ -81,34 +81,63 @@ contract Phase2E_E2E is Phase1B_IntegrationTest {
     }
 
     // --- TEST C: Bypass Builder (Malicious 2000 USDC) ---
-    function test_Phase2E_TestC_BypassBuilder() public {
-        // Manually construct a 2000 USDC swap, completely bypassing the builder!
+    function _buildCompromisedOp(bytes memory maliciousCallData) internal returns (PackedUserOperation memory) {
+        PackedUserOperation memory userOp;
+        userOp.sender = address(kernel);
+        userOp.nonce = ValidatorLib.encodePermissionAsNonce(0x00, PERMISSION_ID, 0, 0);
+        userOp.callData = maliciousCallData;
+        userOp.accountGasLimits = bytes32(abi.encodePacked(uint128(2000000), uint128(2000000)));
+        userOp.preVerificationGas = 1000000;
+        userOp.gasFees = bytes32(abi.encodePacked(uint128(10 gwei), uint128(10 gwei)));
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aiAgent.key, userOpHash.toEthSignedMessageHash());
+        bytes memory aiSignature = abi.encodePacked(r, s, v);
+        userOp.signature = abi.encodePacked(uint8(0), uint64(0), uint8(255), aiSignature);
+        return userOp;
+    }
+
+    function test_Phase2E_TestC_Compromise_AmountAboveLimit() public {
         bytes[] memory inputs = new bytes[](1);
-        bytes memory path = abi.encodePacked(USDC_ADDR, uint24(500), WETH_ADDR);
-        
-        // Slippage math: WETH = $3000, 2000 USDC = ~0.666 WETH
-        // Set amountOutMin low enough to pass slippage check but high enough to be "realistic"
-        inputs[0] = _buildV3SwapInput(address(1), 2000e6, 600e15, path, true);
-        
-        bytes memory commands = new bytes(1);
-        commands[0] = 0x00; 
-        
-        vm.warp(1000000000);
-        feed.setUpdatedAt(1000000000);
-        
+        inputs[0] = _buildV3SwapInput(address(1), 2000e6, 600e15, abi.encodePacked(USDC_ADDR, uint24(500), WETH_ADDR), true);
+        bytes memory commands = new bytes(1); commands[0] = 0x00; 
         bytes memory routerCallData = abi.encodeWithSelector(0x3593564c, commands, inputs, block.timestamp + 300);
-        bytes memory executionCalldata = abi.encodePacked(ROUTER_ADDR, uint256(0), routerCallData);
-        bytes memory executePayload = abi.encodeWithSelector(0xe9ae5c53, bytes32(0), executionCalldata);
-        bytes memory maliciousCallData = abi.encodePacked(Kernel.executeUserOp.selector, executePayload);
-
-        uint256 usdcBefore = usdc.balanceOf(address(kernel));
-
-        // Submit - This MUST fail in the Hook because 2000e6 > 1000e6 daily limit
-        // handleOps will emit UserOperationEvent(success: false), it will NOT revert
-        _submitUserOp(maliciousCallData, 0);
+        bytes memory maliciousCallData = abi.encodePacked(Kernel.executeUserOp.selector, abi.encodeWithSelector(0xe9ae5c53, bytes32(0), abi.encodePacked(ROUTER_ADDR, uint256(0), routerCallData)));
         
-        uint256 usdcAfter = usdc.balanceOf(address(kernel));
-        assertEq(usdcBefore, usdcAfter, "Funds should NOT move");
+        PackedUserOperation memory userOp = _buildCompromisedOp(maliciousCallData);
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1); ops[0] = userOp;
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("FailedOpWithRevert(uint256,string,bytes)")), 0, "AA23 reverted", abi.encodeWithSelector(bytes4(keccak256("ExceedsMaxAmount()")))));
+        entryPoint.handleOps(ops, payable(owner.addr));
+        
+        vm.expectRevert(bytes4(keccak256("ExceedsMaxAmount()")));
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Phase2E_TestC_Compromise_AttackerTarget() public {
+        bytes memory maliciousCallData = abi.encodePacked(Kernel.executeUserOp.selector, abi.encodeWithSelector(0xe9ae5c53, bytes32(0), abi.encodePacked(address(0x1337), uint256(0), bytes("steal"))));
+        
+        PackedUserOperation memory userOp = _buildCompromisedOp(maliciousCallData);
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1); ops[0] = userOp;
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("FailedOpWithRevert(uint256,string,bytes)")), 0, "AA23 reverted", abi.encodeWithSelector(bytes4(keccak256("InvalidTarget()")))));
+        entryPoint.handleOps(ops, payable(owner.addr));
+        
+        vm.expectRevert(bytes4(keccak256("InvalidTarget()")));
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
+    }
+
+    function test_Phase2E_TestC_Compromise_MaliciousPath() public {
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = _buildV3SwapInput(address(1), 400e6, 0, abi.encodePacked(USDC_ADDR, uint24(500), address(0x69)), true);
+        bytes memory commands = new bytes(1); commands[0] = 0x00; 
+        bytes memory routerCallData = abi.encodeWithSelector(0x3593564c, commands, inputs, block.timestamp + 300);
+        bytes memory maliciousCallData = abi.encodePacked(Kernel.executeUserOp.selector, abi.encodeWithSelector(0xe9ae5c53, bytes32(0), abi.encodePacked(ROUTER_ADDR, uint256(0), routerCallData)));
+        
+        PackedUserOperation memory userOp = _buildCompromisedOp(maliciousCallData);
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1); ops[0] = userOp;
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("FailedOpWithRevert(uint256,string,bytes)")), 0, "AA23 reverted", abi.encodeWithSelector(bytes4(keccak256("InvalidToken()")))));
+        entryPoint.handleOps(ops, payable(owner.addr));
+        
+        vm.expectRevert(bytes4(keccak256("InvalidToken()")));
+        policy.checkUserOpPolicy(PERMISSION_ID, userOp);
     }
 
     // --- TEST D: Prompt Injection ---

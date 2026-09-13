@@ -49,7 +49,7 @@ It is injected into the Agent's `ObservationContext.graphObservation`. The AI re
 The Agent translates its observations into a semantic `TradeProposal`. This proposal must pass the deterministic `UserOpBuilder` and the on-chain `AegisMindHook`/`AegisMindPolicy`. The Graph has ZERO representation in the Zod schema or on-chain logic.
 
 ### 7. What remains enforced on-chain
-Daily spending limits (e.g., $500/day), execution price/slippage (Chainlink), router whitelist, and token constraints remain rigorously enforced by `AegisMindHook` and `AegisMindPolicy`.
+Daily spending limits (configurable; e.g., $1,000/day in tests), execution price/slippage (Chainlink), router whitelist, and token constraints remain rigorously enforced by `AegisMindHook` and `AegisMindPolicy`.
 
 ### 8. Which Graph endpoint/subgraph is used
 The adapter is provider-neutral, expecting a standard GraphQL endpoint. We default to querying a standard Uniswap V3 deployment subgraph.
@@ -59,3 +59,6 @@ A `.env` file should configure `GRAPH_API_KEY` or `GRAPH_ENDPOINT` if required b
 
 ### 10. Limitations
 The intelligence is currently limited to snapshot state (liquidity/price) and does not natively implement historical aggregation (which would require more complex queries).
+
+## Code Generation & Assistance
+AI tools were used strictly to accelerate boilerplate generation, ideation, and test-suite drafting during development. At no point is AI-generated code assumed to be intrinsically safe or "proven." All critical cryptographic and structural authorization boundaries—particularly the ERC-4337 `userOpHash` integration, calldata parsing, and oracle logic—were manually architected, rigorously audited, and strictly restricted on-chain.

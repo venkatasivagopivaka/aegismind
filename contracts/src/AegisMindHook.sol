@@ -19,7 +19,7 @@ interface AggregatorV3Interface {
 /**
  * @title AegisMindHook
  * @notice Singleton Hook for execution-phase stateful enforcement of daily USDC budgets
- *         and mathematically deterministic slippage bounds via Chainlink.
+ *         and deterministic slippage bounds derived from Chainlink oracle data.
  */
 contract AegisMindHook is IHook {
     error AegisMindAlreadyInitialized();

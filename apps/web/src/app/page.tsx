@@ -85,8 +85,8 @@ export default function AegisMindDashboard() {
         </div>
 
         <div className="max-w-3xl text-3xl md:text-5xl font-light leading-tight text-gray-800 border-l-[3px] border-gray-900 pl-8 py-2 text-left">
-          <p>The AI <span className="font-semibold">chooses</span> the transaction.</p>
-          <p className="mt-5">It never gets to decide its <span className="font-semibold">authority</span>.</p>
+          <p>The AI chooses what it wants to do.</p>
+          <p className="mt-5">It never gets to decide what it is allowed to do.</p>
         </div>
         
         <p className="text-sm font-medium text-slate-500 max-w-3xl text-left pl-8 mt-2 -ml-[2px] w-full">
@@ -127,7 +127,7 @@ export default function AegisMindDashboard() {
           className={`flex-1 pb-4 px-2 border-b-2 font-mono text-xs md:text-[11px] tracking-widest font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed
             ${isCompromised ? 'border-red-700 text-red-800 bg-red-50/50' : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
         >
-          [ ATTACK ] 2,000 USDC TFR
+          [ ATTACK ] 2,000 USDC SWAP
         </button>
         <button 
           onClick={() => runSimulation("DEFI_ATTACK")}
@@ -155,10 +155,10 @@ export default function AegisMindDashboard() {
             
             <div className="text-center mb-6">
               <p className={`text-2xl font-bold tracking-tight ${isAttack ? 'text-gray-900' : 'text-gray-900'}`}>
-                {isCompromised ? 'TRANSFER 2,000 USDC' : isDefiAttack ? 'SWAP 1 USDC' : is1USDC ? 'SWAP 1 USDC' : 'SWAP 400 USDC'}
+                {isCompromised ? 'SWAP 2,000 USDC' : isDefiAttack ? 'SWAP 1 USDC' : is1USDC ? 'SWAP 1 USDC' : 'SWAP 400 USDC'}
               </p>
               <p className="text-sm font-medium text-slate-500 mt-2">
-                {isCompromised ? '→ 0xATTACKER...' : isDefiAttack ? '→ PEPE' : '→ WETH'}
+                {isCompromised ? '→ WETH' : isDefiAttack ? '→ PEPE' : '→ WETH'}
               </p>
             </div>
             
@@ -224,8 +224,10 @@ export default function AegisMindDashboard() {
                         <div className={`text-[10px] font-mono mt-2 leading-relaxed ${isAttack ? 'text-red-600' : 'text-slate-500'}`}>
                           {isCompromised ? (
                             <div>
-                              <div>Target ........ FAIL</div>
-                              <div className="mt-1 font-bold">Reason: InvalidTarget()</div>
+                              <div>Target ........ PASS</div>
+                              <div>Selector ...... PASS</div>
+                              <div>Amount ........ FAIL</div>
+                              <div className="mt-1 font-bold">Reason: ExceedsMaxAmount()</div>
                             </div>
                           ) : isDefiAttack ? (
                             <div>
@@ -305,10 +307,10 @@ export default function AegisMindDashboard() {
                 
                 <div className="grid grid-cols-2 gap-y-4 max-w-sm mx-auto text-sm font-mono mb-6 border-b border-gray-200 pb-6">
                   <div className="text-slate-500 text-left">REQUESTED</div>
-                  <div className="text-gray-900 text-right font-bold">TRANSFER 2,000 USDC</div>
+                  <div className="text-gray-900 text-right font-bold">SWAP 2,000 USDC</div>
                   
                   <div className="text-slate-500 text-left">VIOLATION</div>
-                  <div className="text-red-700 text-right font-bold">Unauthorized execution target</div>
+                  <div className="text-red-700 text-right font-bold">Exceeds max transaction amount ($500)</div>
                 </div>
 
                 <div className="space-y-4">
@@ -446,7 +448,7 @@ export default function AegisMindDashboard() {
           <div className="space-y-3">
             <h4 className="text-xs font-mono font-bold text-gray-900 mb-6 tracking-wider">ARCHITECTURAL / PROTOTYPE</h4>
             <div className="space-y-2 text-xs font-mono text-slate-500">
-              <p className="leading-relaxed">31 Forge integration tests passing locally, verifying boundary isolation across malicious inputs.</p>
+              <p className="leading-relaxed">Security and integration test suite passing locally, verifying boundary isolation across malicious inputs.</p>
               <p className="mt-4 text-slate-400 flex items-center gap-2 pt-2 border-t border-gray-200"><Cpu className="w-3 h-3"/> SP1 Architecture Implemented (Not Live)</p>
             </div>
           </div>

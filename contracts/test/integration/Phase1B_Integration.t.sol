@@ -247,4 +247,126 @@ contract Phase1B_IntegrationTest is Test {
         vm.expectRevert();
         entryPoint.handleOps(ops, payable(owner.addr));
     }
+
+    function _buildTestUserOp() internal view returns (PackedUserOperation memory) {
+        PackedUserOperation memory userOp;
+        userOp.sender = address(kernel);
+        userOp.nonce = ValidatorLib.encodePermissionAsNonce(0x00, PERMISSION_ID, 0, 0);
+
+        bytes[] memory inputs = new bytes[](1);
+        bytes memory path = abi.encodePacked(address(usdc), uint24(500), address(weth));
+        inputs[0] = _buildV3SwapInput(address(1), 500e6, 159e15, path, true);
+        bytes memory commands = new bytes(1);
+        commands[0] = 0x00; 
+        bytes memory routerCallData = abi.encodeWithSelector(0x3593564c, commands, inputs, block.timestamp + 100);
+        bytes memory executionCalldata = abi.encodePacked(address(router), uint256(0), routerCallData);
+        bytes memory executePayload = abi.encodeWithSelector(0xe9ae5c53, bytes32(0), executionCalldata);
+        userOp.callData = abi.encodePacked(Kernel.executeUserOp.selector, executePayload);
+
+        userOp.accountGasLimits = bytes32(abi.encodePacked(uint128(2000000), uint128(2000000)));
+        userOp.preVerificationGas = 1000000;
+        userOp.gasFees = bytes32(abi.encodePacked(uint128(10 gwei), uint128(10 gwei)));
+        return userOp;
+    }
+
+    function _signUserOp(PackedUserOperation memory userOp) internal view returns (PackedUserOperation memory) {
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aiAgent.key, userOpHash.toEthSignedMessageHash());
+        bytes memory aiSignature = abi.encodePacked(r, s, v);
+        userOp.signature = abi.encodePacked(uint8(0), uint64(0), uint8(255), aiSignature);
+        return userOp;
+    }
+
+    function test_Revert_GasMalleability_CallGasLimit() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        userOp = _signUserOp(userOp);
+        userOp.accountGasLimits = bytes32(abi.encodePacked(uint128(2000000), uint128(2500000))); // changed callGasLimit
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
+
+    function test_Revert_GasMalleability_VerificationGasLimit() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        userOp = _signUserOp(userOp);
+        userOp.accountGasLimits = bytes32(abi.encodePacked(uint128(2500000), uint128(2000000))); // changed verificationGasLimit
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
+
+    function test_Revert_GasMalleability_MaxFeePerGas() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        userOp = _signUserOp(userOp);
+        userOp.gasFees = bytes32(abi.encodePacked(uint128(20 gwei), uint128(10 gwei))); // changed maxFeePerGas
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
+
+    function test_Revert_GasMalleability_MaxPriorityFeePerGas() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        userOp = _signUserOp(userOp);
+        userOp.gasFees = bytes32(abi.encodePacked(uint128(10 gwei), uint128(20 gwei))); // changed maxPriorityFeePerGas
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
+
+    function test_Revert_GasMalleability_PaymasterAndData() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        userOp = _signUserOp(userOp);
+        userOp.paymasterAndData = hex"12345678"; // changed paymasterAndData
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
+
+    function test_Revert_GasMalleability_CallData() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        userOp = _signUserOp(userOp);
+        userOp.callData = abi.encodePacked(userOp.callData, hex"00"); // changed callData
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
+
+    function test_Revert_GasMalleability_Nonce() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        userOp = _signUserOp(userOp);
+        userOp.nonce = ValidatorLib.encodePermissionAsNonce(0x00, PERMISSION_ID, 0, 1); // changed nonce
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
+
+    function test_Revert_GasMalleability_Sender() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        userOp = _signUserOp(userOp);
+        userOp.sender = address(1234); // changed sender
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
+
+    function test_Revert_CrossChainReplay() public {
+        PackedUserOperation memory userOp = _buildTestUserOp();
+        
+        vm.chainId(1); // Sign on chain 1
+        userOp = _signUserOp(userOp);
+
+        vm.chainId(2); // Submit on chain 2
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+        vm.expectRevert();
+        entryPoint.handleOps(ops, payable(owner.addr));
+    }
 }
